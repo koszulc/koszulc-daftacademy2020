@@ -1,60 +1,66 @@
-from typing import Dict
-from fastapi import FastAPI
+import aiosqlite
+import sqlite3
+from contextlib import contextmanager
+from fastapi import FastAPI, Response, status
 from pydantic import BaseModel
-# import uvicorn
+import uvicorn
 
 app = FastAPI(debug=True)
-app.counter = 0
-app.patients_list = dict()
+
+
+@app.on_event("startup")
+async def startup():
+    app.db_connection = sqlite3.connect('chinook.db')
+
+
+@app.on_event("shutdown")
+async def shutdown():
+   app.db_connection.close()
+
+
+
+
+@app.on_event("startup")
+async def startup():
+    app.db_connection = sqlite3.connect('chinook.db')
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    app.db_connection.close()
 
 
 @app.get("/")
-async def root():
+def root():
     return {"message": "Hello World during the coronavirus pandemic!"}
 
+@app.get("/tracks")
+async def tracks(page: int = 0, per_page: int = 10):
+    app.db_connection.row_factory = sqlite3.Row
+    data = app.db_connection.execute(
+        f"SELECT * FROM tracks LIMIT {per_page} OFFSET {page * per_page}"
+        ).fetchall()
+    return data
 
-@app.get("/method")
-async def get_method():
-    return {"method": "GET"}
-
-
-@app.post("/method")
-async def post_method():
-    return {"method": "POST"}
-
-
-@app.put("/method")
-async def put_method():
-    return {"method": "PUT"}
-
-
-@app.delete("/method")
-async def delete_method():
-    return {"method": "DELETE"}
-
-
-def counter():
-    app.counter += 1
-    return str(app.counter)
+@app.get("/tracks/composers/")
+async def composer_tracks(response: Response, composer_name: str):
+    app.db_connection.row_factory = lambda cursor, row: row[0]
+    data = app.db_connection.execute(
+        f"""SELECT name
+            FROM tracks
+            WHERE composer IS '{composer_name}'
+            ORDER BY name"""
+        ).fetchall()
+    if len(data) == 0:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"detail": {"error": "Couldn't find songs by this composer."}}
+    else:
+        return data
 
 
-class AppendPatient(BaseModel):
-    name: str
-    surname: str
+# @app.get("/tracks/composers/")
+# async def composers(response: Response, composer_name: str):
+#     pass
 
-
-class GetPatient(BaseModel):
-    id: int = app.counter
-    patient: Dict
-
-
-@app.post("/patient", response_model=GetPatient)
-def append_patient(patient_data: AppendPatient):
-    id_ = app.counter
-    app.patients_list[id_] = patient_data.dict()
-    counter()
-    return GetPatient(id=id_, patient=patient_data.dict())
-
-
-# if __name__ == "__main__":
-#     uvicorn.run(app, host="127.0.0.1", port=8000)
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)
